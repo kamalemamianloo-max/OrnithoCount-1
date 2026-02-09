@@ -6,7 +6,8 @@ import {
   Layout, ClipboardList, MapPin, Calendar, Clock, Play, Trash, Sun, Moon, 
   Settings as SettingsIcon, LogOut, FileText, Binoculars, BookOpen, ExternalLink, 
   X, Cloud, Wind, Thermometer, Globe, Info, Mail, User, LogIn, CheckCircle, 
-  AlertCircle, Loader2, Edit2, Droplets, Upload, Download, MoreVertical, FileJson, Table
+  AlertCircle, Loader2, Edit2, Droplets, Upload, Download, MoreVertical, FileJson, Table,
+  CloudOff, Save as SaveIcon
 } from 'lucide-react';
 import { validateWordPressCredentials, syncSessionToWordPress } from './services/wordpressService';
 import { DEFAULT_SPECIES } from './speciesData';
@@ -151,6 +152,24 @@ const App: React.FC = () => {
   const [syncStatus, setSyncStatus] = useState<'idle' | 'syncing' | 'success' | 'error'>('idle');
   const [exportMenuOpen, setExportMenuOpen] = useState<string | null>(null);
   const [gpsStatus, setGpsStatus] = useState<'idle' | 'locating' | 'acquired' | 'error'>('idle');
+  
+  // Auto-save toast
+  const [showSaveToast, setShowSaveToast] = useState(false);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Edit Session Metadata State (Dashboard)
+  const [editingSession, setEditingSession] = useState<Session | null>(null);
+  const [editForm, setEditForm] = useState<{
+      name: string;
+      observers: string;
+      date: string;
+      startTime: string;
+      temp: string;
+      cloud: string;
+      wind: string;
+      precip: string;
+      notes: string;
+  }>({ name: '', observers: '', date: '', startTime: '', temp: '', cloud: '', wind: '', precip: '', notes: '' });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -208,11 +227,9 @@ const App: React.FC = () => {
     if (savedSettings) {
        try {
          const parsed = JSON.parse(savedSettings);
-         // Safety check: if speciesList is empty (user deleted all or bug), restore defaults
          if (!parsed.speciesList || !Array.isArray(parsed.speciesList) || parsed.speciesList.length === 0) {
              parsed.speciesList = DEFAULT_SPECIES;
          }
-         // Ensure codes/fields exist for migration compatibility
          if (!parsed.codes) parsed.codes = DEFAULT_SETTINGS.codes;
          if (!parsed.fields) parsed.fields = DEFAULT_SETTINGS.fields;
          
@@ -226,7 +243,24 @@ const App: React.FC = () => {
     if (savedUser) setUser(JSON.parse(savedUser));
   }, []);
 
-  useEffect(() => { localStorage.setItem('orni_sessions', JSON.stringify(sessions)); }, [sessions]);
+  // Save Sessions & Trigger Toast
+  useEffect(() => { 
+      localStorage.setItem('orni_sessions', JSON.stringify(sessions)); 
+      
+      // Debounced Toast for Auto-save
+      if (sessions.length > 0) {
+          setShowSaveToast(true);
+          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+          saveTimeoutRef.current = setTimeout(() => {
+              setShowSaveToast(false);
+          }, 2000);
+      }
+      
+      return () => {
+          if (saveTimeoutRef.current) clearTimeout(saveTimeoutRef.current);
+      };
+  }, [sessions]);
+
   useEffect(() => { localStorage.setItem('orni_settings', JSON.stringify(settings)); }, [settings]);
   useEffect(() => { localStorage.setItem('orni_history', JSON.stringify(locationHistory)); }, [locationHistory]);
   useEffect(() => {
@@ -247,7 +281,6 @@ const App: React.FC = () => {
     html?.setAttribute('dir', dir);
   }, [settings.theme, settings.language]);
 
-  // --- Auto-fetch Geolocation on New Session View ---
   const fetchLocation = () => {
       if ('geolocation' in navigator) {
           setGpsStatus('locating');
@@ -346,6 +379,11 @@ const App: React.FC = () => {
     fileInputRef.current?.click();
   };
 
+  const handleReloadDefaults = () => {
+      setSettings(prev => ({ ...prev, speciesList: DEFAULT_SPECIES }));
+      alert("Default species list reloaded.");
+  };
+
   const handleFileImport = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -380,6 +418,40 @@ const App: React.FC = () => {
           navigator.clipboard.writeText(text);
           alert("Summary copied to clipboard!");
       }
+  };
+
+  const startEditingSession = (session: Session) => {
+      setEditingSession(session);
+      setEditForm({
+          name: session.name,
+          observers: session.observers,
+          date: session.date,
+          startTime: session.startTime,
+          temp: session.weather?.temperature || '',
+          cloud: session.weather?.cloudCover || '',
+          wind: session.weather?.windSpeed || '',
+          precip: session.weather?.precipitation || '',
+          notes: session.notes || ''
+      });
+  };
+
+  const saveEditedSession = () => {
+      if (!editingSession) return;
+      setSessions(prev => prev.map(s => s.id === editingSession.id ? {
+          ...s,
+          name: editForm.name,
+          observers: editForm.observers,
+          date: editForm.date,
+          startTime: editForm.startTime,
+          notes: editForm.notes,
+          weather: {
+              temperature: editForm.temp,
+              cloudCover: editForm.cloud,
+              windSpeed: editForm.wind,
+              precipitation: editForm.precip
+          }
+      } : s));
+      setEditingSession(null);
   };
 
   const activeSession = sessions.find(s => s.id === activeSessionId);
@@ -473,7 +545,6 @@ const App: React.FC = () => {
                 <p className="text-gray-500 dark:text-gray-400">{t('ready')}</p>
               </div>
               <button onClick={() => {
-                  // Reset form data for a fresh start
                   setNewSessionData({
                       name: '',
                       date: new Date().toISOString().split('T')[0],
@@ -508,66 +579,105 @@ const App: React.FC = () => {
                         </div>
                     ) : (
                         sessions.map(session => (
-                        <div key={session.id} className="p-4 hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-all flex justify-between items-center group cursor-pointer last:rounded-b-2xl" onClick={() => { setActiveSessionId(session.id); setView('active-session'); }}>
-                            <div className="flex-1">
-                                <div className="flex items-center gap-3">
-                                    <h4 className="font-bold text-lg dark:text-white">{session.name}</h4>
-                                    {session.status === 'completed' && (
-                                        <span className="flex items-center gap-1 bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold dark:bg-green-900 dark:text-green-300 shadow-sm">
+                        <div key={session.id} className="p-4 hover:bg-gray-50 dark:hover:bg-slate-700/50 transition-all flex flex-col sm:flex-row justify-between items-center group cursor-pointer last:rounded-b-2xl gap-4 sm:gap-0" onClick={() => { setActiveSessionId(session.id); setView('active-session'); }}>
+                            <div className="flex-1 w-full sm:w-auto">
+                                <div className="flex flex-wrap items-center gap-3 mb-2">
+                                    <h4 className="font-bold text-xl dark:text-white truncate max-w-[200px]">{session.name}</h4>
+                                    
+                                    {/* Status Badges */}
+                                    {session.status === 'completed' ? (
+                                        <span className="flex items-center gap-1 bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold dark:bg-green-900 dark:text-green-300 shadow-sm border border-green-200 dark:border-green-800">
                                            <CheckCircle size={10} className="stroke-[3]" /> FINISHED
                                         </span>
-                                    )}
-                                    {session.status === 'active' && (
+                                    ) : (
                                         <span className="bg-blue-50 text-blue-600 text-[10px] px-2 py-0.5 rounded-full font-bold dark:bg-blue-900/30 dark:text-blue-300 border border-blue-100 dark:border-blue-800">
                                             ACTIVE
                                         </span>
                                     )}
-                                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold uppercase border ${session.type === 'counting' ? 'bg-indigo-50 text-indigo-600 border-indigo-100' : 'bg-orange-50 text-orange-600 border-orange-100'}`}>
+
+                                    {/* Distinct Unsynced Badge */}
+                                    {(!session.syncStatus || session.syncStatus !== 'synced') && (
+                                        <span className="flex items-center gap-1 bg-yellow-100 text-yellow-700 text-[10px] px-2 py-0.5 rounded-full font-bold dark:bg-yellow-900/40 dark:text-yellow-300 shadow-sm border border-yellow-200 dark:border-yellow-800">
+                                            <CloudOff size={10} className="stroke-[3]" /> NOT SYNCED
+                                        </span>
+                                    )}
+                                </div>
+                                
+                                <div className="flex flex-wrap gap-4 text-xs text-gray-500 dark:text-gray-400">
+                                    <span className="flex items-center gap-1"><Calendar size={12}/> {session.date}</span>
+                                    <span className="flex items-center gap-1"><Clock size={12}/> {session.startTime}</span>
+                                    <span className="truncate max-w-[150px]"><User size={12} className="inline mr-1"/>{session.observers}</span>
+                                </div>
+                            </div>
+
+                            {/* Prominent Stats & Type */}
+                            <div className="flex items-center gap-6 w-full sm:w-auto justify-between sm:justify-end">
+                                <div className="text-right">
+                                    <div className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Type</div>
+                                    <span className={`text-xs font-bold px-2 py-1 rounded border ${session.type === 'counting' ? 'bg-indigo-50 text-indigo-600 border-indigo-100 dark:bg-indigo-900/30 dark:text-indigo-300 dark:border-indigo-800' : 'bg-orange-50 text-orange-600 border-orange-100 dark:bg-orange-900/30 dark:text-orange-300 dark:border-orange-800'}`}>
                                         {session.type === 'counting' ? 'Migration' : 'Trip'}
                                     </span>
                                 </div>
-                                <div className="flex gap-4 mt-1 text-xs text-gray-500 dark:text-gray-400">
-                                    <span className="flex items-center gap-1"><Calendar size={12}/> {session.date}</span>
-                                    <span className="flex items-center gap-1"><Binoculars size={12}/> {session.sightings.reduce((a,b)=>a+b.count,0)} birds</span>
-                                    <span className="flex items-center gap-1" title="Sync Status">{renderSyncStatus(session)} {session.syncStatus || 'unsynced'}</span>
+
+                                <div className="text-right">
+                                    <div className="text-[10px] uppercase text-gray-400 font-bold tracking-wider">Birds</div>
+                                    <div className="text-2xl font-black text-slate-800 dark:text-slate-100 leading-none">
+                                        {session.sightings.reduce((a,b)=>a+b.count,0)}
+                                    </div>
                                 </div>
-                            </div>
-                            <div className="flex gap-2 items-center pl-4 relative">
-                                <div className="relative">
+
+                                {/* Action Buttons */}
+                                <div className="flex gap-1 pl-4 border-l border-gray-100 dark:border-slate-700">
+                                    <div className="relative">
+                                        <button 
+                                            onClick={(e) => { 
+                                                e.stopPropagation(); 
+                                                setExportMenuOpen(exportMenuOpen === session.id ? null : session.id); 
+                                            }} 
+                                            className={`p-2 rounded-lg transition-colors ${exportMenuOpen === session.id ? 'bg-primary text-white' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700'}`}
+                                            title="Download/Export"
+                                        >
+                                            <Download size={18}/>
+                                        </button>
+                                        {exportMenuOpen === session.id && (
+                                            <div className="absolute top-full right-0 mt-2 w-32 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-gray-100 dark:border-slate-700 overflow-hidden z-50 animate-in fade-in zoom-in-95">
+                                                <button onClick={(e) => { e.stopPropagation(); handleDashboardDownload('csv', session); }} className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-2"><Table size={14}/> CSV</button>
+                                                <button onClick={(e) => { e.stopPropagation(); handleDashboardDownload('json', session); }} className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-2"><FileJson size={14}/> JSON</button>
+                                                <button onClick={(e) => { e.stopPropagation(); handleDashboardDownload('pdf', session); }} className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-2"><FileText size={14}/> PDF</button>
+                                                <button onClick={(e) => { e.stopPropagation(); handleDashboardDownload('text', session); }} className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-2"><ClipboardList size={14}/> Copy</button>
+                                            </div>
+                                        )}
+                                    </div>
+                                    
+                                    <button 
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            startEditingSession(session);
+                                        }}
+                                        className="p-2 text-gray-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-colors" 
+                                        title="Edit Metadata"
+                                    >
+                                        <Edit2 size={18} />
+                                    </button>
+
+                                    {user && session.syncStatus !== 'synced' && (
+                                        <button onClick={(e) => { e.stopPropagation(); handleSyncSession(session); }} className="p-2 text-gray-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-colors" title="Sync to WordPress">
+                                            <Cloud size={18} />
+                                        </button>
+                                    )}
                                     <button 
                                         onClick={(e) => { 
                                             e.stopPropagation(); 
-                                            setExportMenuOpen(exportMenuOpen === session.id ? null : session.id); 
+                                            if(confirm('Delete this session?')) {
+                                                setSessions(prev => prev.filter(s => s.id !== session.id));
+                                            }
                                         }} 
-                                        className={`p-2 rounded-lg transition-colors ${exportMenuOpen === session.id ? 'bg-primary text-white' : 'text-gray-400 hover:bg-gray-100 dark:hover:bg-slate-700'}`}
+                                        className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+                                        title="Delete Session"
                                     >
-                                        <Download size={18}/>
+                                        <Trash size={18}/>
                                     </button>
-                                    {exportMenuOpen === session.id && (
-                                        <div className="absolute top-full right-0 mt-2 w-32 bg-white dark:bg-slate-800 rounded-lg shadow-xl border border-gray-100 dark:border-slate-700 overflow-hidden z-50">
-                                            <button onClick={(e) => { e.stopPropagation(); handleDashboardDownload('csv', session); }} className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-2"><Table size={14}/> CSV</button>
-                                            <button onClick={(e) => { e.stopPropagation(); handleDashboardDownload('json', session); }} className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-2"><FileJson size={14}/> JSON</button>
-                                            <button onClick={(e) => { e.stopPropagation(); handleDashboardDownload('pdf', session); }} className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-2"><FileText size={14}/> PDF</button>
-                                            <button onClick={(e) => { e.stopPropagation(); handleDashboardDownload('text', session); }} className="w-full text-left px-3 py-2 text-xs font-bold hover:bg-gray-50 dark:hover:bg-slate-700 flex items-center gap-2"><ClipboardList size={14}/> Copy</button>
-                                        </div>
-                                    )}
                                 </div>
-                                {user && session.syncStatus !== 'synced' && (
-                                    <button onClick={(e) => { e.stopPropagation(); handleSyncSession(session); }} className="p-2 text-gray-400 hover:text-primary hover:bg-primary/10 rounded-lg transition-colors" title="Sync to WordPress">
-                                        <Cloud size={18} />
-                                    </button>
-                                )}
-                                <button 
-                                    onClick={(e) => { 
-                                        e.stopPropagation(); 
-                                        if(confirm('Delete this session?')) {
-                                            setSessions(prev => prev.filter(s => s.id !== session.id));
-                                        }
-                                    }} 
-                                    className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
-                                >
-                                    <Trash size={18}/>
-                                </button>
                             </div>
                         </div>
                         ))
@@ -577,7 +687,6 @@ const App: React.FC = () => {
           </div>
         )}
         
-        {/* ... Rest of existing view rendering (new-session, active-session, settings) ... */}
         {view === 'new-session' && (
           <div className="max-w-2xl mx-auto p-4 md:p-8 w-full pb-20">
              <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl p-6 md:p-8 border border-gray-100 dark:border-slate-700">
@@ -686,18 +795,32 @@ const App: React.FC = () => {
           </div>
         )}
 
-        {view === 'active-session' && activeSession && (
-          <SessionView 
-            session={activeSession}
-            speciesList={settings.speciesList}
-            settings={settings}
-            onUpdateSession={s => setSessions(prev => prev.map(old => old.id === s.id ? s : old))}
-            onClose={() => {
-                setActiveSessionId(null);
-                setView('dashboard');
-            }}
-            onSync={handleSyncSession}
-          />
+        {view === 'active-session' && (
+            activeSession ? (
+                <SessionView 
+                    session={activeSession}
+                    speciesList={settings.speciesList}
+                    settings={settings}
+                    onUpdateSession={s => setSessions(prev => prev.map(old => old.id === s.id ? s : old))}
+                    onClose={() => {
+                        setActiveSessionId(null);
+                        setView('dashboard');
+                    }}
+                    onSync={handleSyncSession}
+                    onReloadDefaults={handleReloadDefaults}
+                />
+            ) : (
+                <div className="flex flex-col items-center justify-center h-full p-8 text-center min-h-[50vh]">
+                    <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-4">
+                        <AlertCircle size={32} className="text-red-500" />
+                    </div>
+                    <h3 className="text-xl font-bold mb-2 dark:text-white">Session Not Found</h3>
+                    <p className="text-gray-500 dark:text-gray-400 mb-6 max-w-sm">The requested session could not be loaded. It may have been deleted or corrupted.</p>
+                    <button onClick={() => { setActiveSessionId(null); setView('dashboard'); }} className="bg-primary hover:bg-sky-600 text-white px-6 py-3 rounded-xl font-bold shadow-lg transition-all active:scale-95">
+                        Return to Dashboard
+                    </button>
+                </div>
+            )
         )}
 
         {view === 'settings' && (
@@ -709,7 +832,15 @@ const App: React.FC = () => {
         )}
       </main>
       
-      {/* ... Footer and Modals (About, Login, Restore) remain same ... */}
+      {/* Auto-Save Toast */}
+      {showSaveToast && (
+          <div className="fixed bottom-6 right-6 bg-white dark:bg-slate-800 text-slate-800 dark:text-white px-4 py-2 rounded-full shadow-lg border border-gray-200 dark:border-slate-700 flex items-center gap-2 animate-in slide-in-from-bottom-5 fade-in duration-300 z-[100]">
+              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></div>
+              <span className="text-xs font-bold">Data Auto-saved</span>
+          </div>
+      )}
+      
+      {/* ... Footer and Modals (About, Login, Restore) ... */}
       <footer className="bg-white dark:bg-slate-950 border-t border-gray-200 dark:border-slate-800 py-6 px-4 md:px-8">
           <div className="max-w-4xl mx-auto flex flex-col md:flex-row justify-between items-center gap-4">
                <div className="flex items-center gap-2">
@@ -723,6 +854,73 @@ const App: React.FC = () => {
                </div>
           </div>
       </footer>
+      
+      {/* Editing Session Metadata Modal (Accessible from Dashboard) */}
+      {editingSession && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={(e) => e.stopPropagation()}>
+              <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl max-w-lg w-full p-6 animate-in zoom-in-95 flex flex-col max-h-[90vh]">
+                  <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-xl font-bold dark:text-white">Edit Session Details</h3>
+                      <button onClick={() => setEditingSession(null)} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full"><X size={20}/></button>
+                  </div>
+                  
+                  <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+                      <div>
+                          <label className="block text-xs font-bold text-gray-400 uppercase mb-1">{t('locName')}</label>
+                          <input required className="w-full px-4 py-2 rounded-xl border dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.name} onChange={e=>setEditForm({...editForm, name: e.target.value})} />
+                      </div>
+                      
+                      <div className="grid grid-cols-2 gap-4">
+                          <div>
+                              <label className="block text-xs font-bold text-gray-400 uppercase mb-1">{t('date')}</label>
+                              <input type="date" required className="w-full px-4 py-2 rounded-xl border dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.date} onChange={e=>setEditForm({...editForm, date: e.target.value})} />
+                          </div>
+                          <div>
+                              <label className="block text-xs font-bold text-gray-400 uppercase mb-1">{t('time')}</label>
+                              <input type="time" required className="w-full px-4 py-2 rounded-xl border dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.startTime} onChange={e=>setEditForm({...editForm, startTime: e.target.value})} />
+                          </div>
+                      </div>
+                      
+                      <div>
+                          <label className="block text-xs font-bold text-gray-400 uppercase mb-1">{t('observers')}</label>
+                          <input className="w-full px-4 py-2 rounded-xl border dark:bg-slate-800 dark:border-slate-700 dark:text-white" value={editForm.observers} onChange={e=>setEditForm({...editForm, observers: e.target.value})} />
+                      </div>
+                      
+                      <div className="bg-gray-50 dark:bg-slate-800/50 p-4 rounded-xl border border-gray-100 dark:border-slate-700">
+                          <label className="block text-xs font-bold text-gray-500 uppercase mb-3">{t('weather')}</label>
+                          <div className="grid grid-cols-2 gap-3">
+                               <div>
+                                   <label className="text-[10px] text-gray-400 uppercase">Temp (°C)</label>
+                                   <input className="w-full px-3 py-2 rounded-lg border text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={editForm.temp} onChange={e=>setEditForm({...editForm, temp: e.target.value})}/>
+                               </div>
+                               <div>
+                                   <label className="text-[10px] text-gray-400 uppercase">Cloud (%)</label>
+                                   <input className="w-full px-3 py-2 rounded-lg border text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={editForm.cloud} onChange={e=>setEditForm({...editForm, cloud: e.target.value})}/>
+                               </div>
+                               <div>
+                                   <label className="text-[10px] text-gray-400 uppercase">Wind</label>
+                                   <input className="w-full px-3 py-2 rounded-lg border text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={editForm.wind} onChange={e=>setEditForm({...editForm, wind: e.target.value})}/>
+                               </div>
+                               <div>
+                                   <label className="text-[10px] text-gray-400 uppercase">Precip</label>
+                                   <input className="w-full px-3 py-2 rounded-lg border text-sm dark:bg-slate-700 dark:border-slate-600 dark:text-white" value={editForm.precip} onChange={e=>setEditForm({...editForm, precip: e.target.value})}/>
+                               </div>
+                          </div>
+                      </div>
+
+                      <div>
+                           <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Notes</label>
+                           <textarea className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white h-24" value={editForm.notes} onChange={e=>setEditForm({...editForm, notes: e.target.value})} />
+                      </div>
+                  </div>
+
+                  <div className="mt-4 pt-4 border-t border-gray-100 dark:border-slate-700 flex gap-2">
+                      <button onClick={() => setEditingSession(null)} className="flex-1 py-3 text-gray-500 font-bold hover:bg-gray-100 dark:hover:bg-slate-800 rounded-xl">Cancel</button>
+                      <button onClick={saveEditedSession} className="flex-1 py-3 bg-primary text-white font-bold rounded-xl shadow-lg hover:bg-sky-600">Save Changes</button>
+                  </div>
+              </div>
+          </div>
+      )}
 
       {showAbout && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" onClick={(e) => e.stopPropagation()}>

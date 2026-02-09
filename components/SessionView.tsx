@@ -5,7 +5,7 @@ import {
   List, Edit2, Trash2, History, ChevronUp, ChevronDown, MessageSquare, 
   CheckCircle, AlertCircle, Loader2, FileText, FileJson, Table, 
   CheckSquare, Unlock, Info, MapPin, Share2, Clipboard, ExternalLink,
-  Calendar, Clock, Trash, Cloud, ArrowUpRight, Download, Binoculars, Flag
+  Calendar, Clock, Trash, Cloud, ArrowUpRight, Download, Binoculars, Flag, RefreshCw
 } from 'lucide-react';
 import { generateCSV, generateJSON, generatePDF, generateTextSummary } from '../utils/exportUtils';
 
@@ -16,6 +16,7 @@ interface SessionViewProps {
   onUpdateSession: (session: Session) => void;
   onClose: () => void;
   onSync: (session: Session) => void;
+  onReloadDefaults: () => void;
 }
 
 const INITIAL_DETAIL = {
@@ -30,7 +31,7 @@ const INITIAL_DETAIL = {
     comment: ''
 };
 
-export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, settings, onUpdateSession, onClose, onSync }) => {
+export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, settings, onUpdateSession, onClose, onSync, onReloadDefaults }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedSpeciesId, setSelectedSpeciesId] = useState<string | null>(null);
   const [detailEntry, setDetailEntry] = useState(INITIAL_DETAIL);
@@ -63,7 +64,8 @@ export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, 
 
   // --- SORTING LOGIC ---
   const filteredAndSortedSpecies = useMemo(() => {
-    const filtered = speciesList.filter(s => 
+    const safeList = speciesList || []; // Safety check
+    const filtered = safeList.filter(s => 
       s.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
       s.abbreviation.toLowerCase().includes(searchTerm.toLowerCase()) ||
       (s.family && s.family.toLowerCase().includes(searchTerm.toLowerCase()))
@@ -110,19 +112,14 @@ export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, 
   };
 
   const handleToggleFinish = () => {
-    if (isCompleted) {
-      if (confirm("Re-open to count birds?\n\nThis will take you back to the counting screen.")) {
-        onUpdateSession({ ...session, status: 'active' });
-      }
-    } else {
-      if (confirm("Finish session and view report?")) {
-        const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
-        onUpdateSession({
-          ...session,
-          status: 'completed',
-          endTime: now
-        });
-      }
+    // Only called when NOT completed, because the button is hidden in report view
+    if (confirm("Finish session and view report?")) {
+      const now = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+      onUpdateSession({
+        ...session,
+        status: 'completed',
+        endTime: now
+      });
     }
   };
 
@@ -260,7 +257,6 @@ export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, 
                                   </div>
                               </div>
                           )}
-                          
                            {settings.fields.morph && (
                               <div className="space-y-2">
                                   <label className="text-xs font-bold text-gray-400 uppercase">Morph</label>
@@ -271,35 +267,12 @@ export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, 
                                   </div>
                               </div>
                           )}
-
                            {settings.fields.distance && (
                               <div className="space-y-2">
                                   <label className="text-xs font-bold text-gray-400 uppercase">Distance</label>
                                   <div className="flex flex-wrap gap-2">
                                       {settings.codes.distance.map(d => (
                                           <button key={d} onClick={() => setEditingSighting({...editingSighting, distance: d as Distance})} className={`px-3 py-1.5 rounded text-xs font-bold border ${editingSighting.distance === d ? 'bg-slate-600 text-white border-slate-600' : 'bg-white dark:bg-slate-700 border-gray-200 dark:border-slate-600 dark:text-white'}`}>{d}</button>
-                                      ))}
-                                  </div>
-                              </div>
-                          )}
-
-                          {settings.fields.countType && (
-                              <div className="space-y-2">
-                                  <label className="text-xs font-bold text-gray-400 uppercase">Count Type</label>
-                                  <div className="flex flex-wrap gap-2">
-                                      {settings.codes.countType.map(ct => (
-                                          <button key={ct} onClick={() => setEditingSighting({...editingSighting, countType: ct})} className={`px-3 py-1.5 rounded text-xs font-bold border ${editingSighting.countType === ct ? 'bg-teal-500 text-white border-teal-500' : 'bg-white dark:bg-slate-700 border-gray-200 dark:border-slate-600 dark:text-white'}`}>{ct}</button>
-                                      ))}
-                                  </div>
-                              </div>
-                          )}
-                          
-                           {settings.codes.status && settings.codes.status.length > 0 && (
-                              <div className="space-y-2">
-                                  <label className="text-xs font-bold text-gray-400 uppercase">Status</label>
-                                  <div className="flex flex-wrap gap-2">
-                                      {settings.codes.status.map(s => (
-                                          <button key={s} onClick={() => setEditingSighting({...editingSighting, status: s as MigrationStatus})} className={`px-3 py-1.5 rounded text-xs font-bold border ${editingSighting.status === s ? 'bg-red-500 text-white border-red-500' : 'bg-white dark:bg-slate-700 border-gray-200 dark:border-slate-600 dark:text-white'}`}>{s}</button>
                                       ))}
                                   </div>
                               </div>
@@ -326,69 +299,48 @@ export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, 
 
 
   const renderMigrationControls = () => {
-      if (!selectedSpeciesId) return <div className="p-12 text-center text-gray-400 text-sm flex flex-col items-center gap-2"><ArrowLeft size={32}/> Select a species to start counting</div>;
-      
+      if (!selectedSpeciesId) return null;
       const sp = speciesList.find(s => s.id === selectedSpeciesId);
       const primaryDirs = ['N', 'S', 'Local'];
       const secondaryDirs = settings.codes.direction.filter(d => !primaryDirs.includes(d));
 
       return (
           <div className="flex flex-col h-full overflow-hidden">
-              {/* Header: Name */}
               <div className="flex justify-between items-center mb-4 shrink-0 border-b border-gray-100 dark:border-slate-800 pb-2">
                   <div className="overflow-hidden">
                     <div className="font-bold text-lg dark:text-white truncate">{sp?.name}</div>
                     <div className="text-xs font-mono bg-gray-100 dark:bg-slate-700 px-2 py-1 rounded inline-block">{sp?.abbreviation}</div>
                   </div>
+                  <button onClick={() => setSelectedSpeciesId(null)} className="p-1.5 bg-gray-100 dark:bg-slate-700 rounded-full text-gray-500 dark:text-gray-300">
+                      <X size={16}/>
+                  </button>
               </div>
 
-              {/* Top Section: Count + Directions */}
               <div className="flex gap-4 items-stretch mb-4 shrink-0">
-                  {/* Count Controls */}
                   <div className="flex items-center bg-gray-100 dark:bg-slate-800 rounded-xl p-1 shrink-0 shadow-inner">
                       <button onClick={() => setDetailEntry(p => ({...p, count: Math.max(1, p.count - 1)}))} className="w-12 h-12 rounded-lg flex items-center justify-center hover:bg-white dark:hover:bg-slate-700 active:scale-95 transition-all"><Minus/></button>
                       <input type="number" value={detailEntry.count} onChange={e => setDetailEntry(p => ({...p, count: parseInt(e.target.value)||1}))} className="w-16 text-center text-xl font-bold bg-transparent dark:text-white outline-none"/>
                       <button onClick={() => setDetailEntry(p => ({...p, count: p.count + 1}))} className="w-12 h-12 rounded-lg flex items-center justify-center hover:bg-white dark:hover:bg-slate-700 active:scale-95 transition-all"><Plus/></button>
                   </div>
                   
-                  {/* Directions */}
                   <div className="flex-1 flex flex-wrap gap-2 items-center justify-end">
                        {primaryDirs.map(d => (
-                           <button 
-                            key={d}
-                            onClick={() => setDetailEntry(p => ({...p, direction: d as Direction}))}
-                            className={`flex-1 min-w-[3rem] h-12 rounded-xl font-bold text-sm transition-all shadow-sm ${detailEntry.direction === d ? 'bg-primary text-white shadow-primary/30 ring-2 ring-primary ring-offset-2 dark:ring-offset-slate-900' : 'bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 dark:text-gray-200'}`}
-                           >
-                               {d}
-                           </button>
+                           <button key={d} onClick={() => setDetailEntry(p => ({...p, direction: d as Direction}))} className={`flex-1 min-w-[3rem] h-12 rounded-xl font-bold text-sm transition-all shadow-sm ${detailEntry.direction === d ? 'bg-primary text-white shadow-primary/30 ring-2 ring-primary ring-offset-2 dark:ring-offset-slate-900' : 'bg-white dark:bg-slate-700 border border-gray-200 dark:border-slate-600 dark:text-gray-200'}`}>{d}</button>
                        ))}
                        {secondaryDirs.length > 0 && (
-                           <button 
-                             onClick={() => setShowMoreDirs(!showMoreDirs)}
-                             className={`w-12 h-12 rounded-xl flex items-center justify-center border border-gray-200 dark:border-slate-600 ${showMoreDirs ? 'bg-gray-100 dark:bg-slate-800' : 'bg-white dark:bg-slate-700'}`}
-                           >
-                               <ArrowUpRight size={20}/>
-                           </button>
+                           <button onClick={() => setShowMoreDirs(!showMoreDirs)} className={`w-12 h-12 rounded-xl flex items-center justify-center border border-gray-200 dark:border-slate-600 ${showMoreDirs ? 'bg-gray-100 dark:bg-slate-800' : 'bg-white dark:bg-slate-700'}`}><ArrowUpRight size={20}/></button>
                        )}
                   </div>
               </div>
               
-              {/* Expandable Secondary Directions */}
               {showMoreDirs && (
                   <div className="mb-4 grid grid-cols-5 gap-2 animate-in slide-in-from-top-2">
                        {secondaryDirs.map(d => (
-                           <button 
-                            key={d}
-                            onClick={() => setDetailEntry(p => ({...p, direction: d as Direction}))}
-                            className={`h-10 rounded-lg font-bold text-xs transition-all ${detailEntry.direction === d ? 'bg-primary text-white' : 'bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700'}`}
-                           >
-                               {d}
-                           </button>
+                           <button key={d} onClick={() => setDetailEntry(p => ({...p, direction: d as Direction}))} className={`h-10 rounded-lg font-bold text-xs transition-all ${detailEntry.direction === d ? 'bg-primary text-white' : 'bg-gray-50 dark:bg-slate-800 border border-gray-200 dark:border-slate-700'}`}>{d}</button>
                        ))}
                   </div>
               )}
               
-              {/* Columns for Attributes (Age, Sex, Morph, Distance) */}
               <div className="flex-1 overflow-y-auto pr-1">
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4 items-start">
                   {settings.fields.age && (
@@ -431,7 +383,7 @@ export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, 
                         {showExtras ? <ChevronUp size={14}/> : <ChevronDown size={14}/>}
                     </button>
                     {showExtras && (
-                        <div className="mt-3 space-y-4 p-2 bg-gray-50/50 dark:bg-slate-900/50 rounded-lg">
+                        <div className="mt-3 space-y-4 p-2 bg-gray-50/50 dark:bg-slate-900/50 rounded-lg animate-in slide-in-from-top-2">
                             {settings.fields.countType && (
                                 <div>
                                     <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Count Type</label>
@@ -479,13 +431,18 @@ export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, 
                     className="w-full pl-9 pr-4 py-2.5 rounded-lg bg-gray-100 dark:bg-slate-800 border border-transparent focus:border-primary focus:bg-white dark:focus:bg-slate-900 dark:text-white outline-none transition-all text-sm font-medium"
                 />
             </div>
+            
+            <button onClick={handleToggleFinish} className={`px-4 rounded-lg font-bold text-xs flex items-center gap-2 transition-colors ${isCompleted ? 'bg-green-100 text-green-700 border-green-200' : 'bg-white dark:bg-slate-800 text-slate-700 dark:text-gray-200 border border-gray-200 dark:border-slate-700 hover:bg-gray-50'}`}>
+                {isCompleted ? <><CheckCircle size={16}/> Finished</> : <><Flag size={16}/> Finish</>}
+            </button>
+
             <button onClick={() => setShowRecordsModal(true)} className="px-4 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-lg flex items-center justify-center text-primary shadow-sm active:scale-95 transition-all">
                 <History size={20} />
             </button>
          </div>
       </div>
 
-      <div className={`flex-1 overflow-y-auto p-2 md:p-4 bg-gray-50 dark:bg-slate-950 ${session.type === 'counting' ? (isControlsCollapsed ? 'pb-24' : 'pb-[85vh] md:pb-[65vh]') : 'pb-24'}`}>
+      <div className={`flex-1 overflow-y-auto p-2 md:p-4 bg-gray-50 dark:bg-slate-950 ${session.type === 'counting' ? (selectedSpeciesId ? (isControlsCollapsed ? 'pb-24' : 'pb-[85vh] md:pb-[65vh]') : '') : 'pb-24'}`}>
         <div className={`max-w-7xl mx-auto grid ${session.type === 'counting' ? 'grid-cols-3 sm:grid-cols-4 md:grid-cols-6' : 'grid-cols-2 md:grid-cols-4 lg:grid-cols-5'} gap-2 md:gap-3`}>
           {filteredAndSortedSpecies.length === 0 ? (
             <div className="col-span-full flex flex-col items-center justify-center text-center p-12 opacity-50">
@@ -494,8 +451,16 @@ export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, 
                </div>
                <h3 className="text-xl font-bold dark:text-white">Where are the birds?</h3>
                <p className="mt-2 text-sm text-gray-500 dark:text-gray-400">
-                 {searchTerm ? `No matches for "${searchTerm}"` : "Your species list is empty. Add species in Settings."}
+                 {searchTerm ? `No matches for "${searchTerm}"` : "Your species list is empty."}
                </p>
+               {!searchTerm && (
+                   <button 
+                    onClick={onReloadDefaults}
+                    className="mt-4 flex items-center gap-2 bg-primary text-white px-4 py-2 rounded-lg text-sm font-bold shadow-lg hover:bg-sky-600 transition-colors"
+                   >
+                       <RefreshCw size={16}/> Load Default Species
+                   </button>
+               )}
             </div>
           ) : (
              filteredAndSortedSpecies.map(sp => {
@@ -538,35 +503,12 @@ export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, 
                 );
             })
           )}
-          
-          {/* Finish Button at bottom of grid */}
-          <div className="col-span-full pt-6 pb-6">
-              <button 
-                onClick={handleToggleFinish}
-                className={`w-full py-4 rounded-xl font-bold text-lg shadow-lg transition-all flex items-center justify-center gap-2 ${isCompleted ? 'bg-green-100 text-green-700 hover:bg-green-200 border border-green-300' : 'bg-slate-800 text-white hover:bg-slate-700 dark:bg-slate-700 dark:hover:bg-slate-600'}`}
-              >
-                  {isCompleted ? (
-                      <>
-                        <CheckCircle size={24}/> Session Finished
-                      </>
-                  ) : (
-                      <>
-                        <Flag size={24}/> Finish Session
-                      </>
-                  )}
-              </button>
-              {isCompleted && (
-                  <p className="text-center text-xs text-gray-400 mt-2">
-                      Tap "Re-Open" in header to continue counting.
-                  </p>
-              )}
-          </div>
         </div>
       </div>
       
-      {session.type === 'counting' && (
+      {session.type === 'counting' && selectedSpeciesId && (
         <div className={`fixed bottom-0 left-0 right-0 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-gray-200 dark:border-slate-800 z-40 shadow-[0_-5px_15px_rgba(0,0,0,0.1)] transition-all duration-300 ease-in-out ${isControlsCollapsed ? 'h-20' : 'h-[80vh] md:h-[60vh]'}`}>
-            {selectedSpeciesId ? (
+            {selectedSpeciesId && (
               <>
                 <button 
                     onClick={() => setIsControlsCollapsed(!isControlsCollapsed)}
@@ -592,6 +534,9 @@ export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, 
                                 <button onClick={(e) => {e.stopPropagation(); handleMigrationSave();}} className="bg-primary text-white p-2 rounded-lg shadow active:scale-95">
                                     <Save size={20}/>
                                 </button>
+                                <button onClick={(e) => {e.stopPropagation(); setSelectedSpeciesId(null);}} className="bg-gray-200 dark:bg-slate-700 text-gray-600 dark:text-gray-300 p-2 rounded-lg shadow active:scale-95">
+                                    <X size={20}/>
+                                </button>
                             </div>
                          </div>
                     ) : (
@@ -601,162 +546,172 @@ export const SessionView: React.FC<SessionViewProps> = ({ session, speciesList, 
                     )}
                 </div>
               </>
-          ) : (
-             // No species selected
-             <div className="p-4 text-center text-gray-400 text-sm">Select a species to count</div>
           )}
         </div>
       )}
     </div>
   );
 
-  if (editingSighting) {
+  const renderReportUI = () => {
+    const totalBirds = session.sightings.reduce((acc, s) => acc + s.count, 0);
+    const uniqueSpecies = new Set(session.sightings.map(s => s.speciesId)).size;
+    
+    // Group sightings for display
+    const speciesCounts: Record<string, number> = {};
+    session.sightings.forEach(s => {
+        speciesCounts[s.speciesId] = (speciesCounts[s.speciesId] || 0) + s.count;
+    });
+    const sortedSpecies = Object.entries(speciesCounts)
+        .sort(([,a], [,b]) => b - a)
+        .map(([id, count]) => {
+            const sp = speciesList.find(s => s.id === id);
+            return { name: sp?.name || 'Unknown', count, id };
+        });
+
     return (
-       <div className="fixed inset-0 z-50 bg-white dark:bg-slate-900 flex flex-col animate-in slide-in-from-bottom-10">
-          {renderEditForm()}
-       </div>
+        <div className="flex flex-col h-full bg-gray-50 dark:bg-slate-900">
+            {/* Header */}
+            <div className="p-4 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex justify-between items-center shadow-sm shrink-0">
+                <div>
+                    <h2 className="text-xl font-bold dark:text-white">Session Report</h2>
+                    <p className="text-sm text-gray-500">{session.name} • {session.date}</p>
+                </div>
+                <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full text-gray-500">
+                    <X size={24}/>
+                </button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 md:p-8">
+                <div className="max-w-3xl mx-auto space-y-6">
+                    
+                    {/* Stats Cards */}
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-gray-100 dark:border-slate-700">
+                            <div className="text-sm text-gray-500 uppercase font-bold">Total Birds</div>
+                            <div className="text-3xl font-black text-primary">{totalBirds}</div>
+                        </div>
+                        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-gray-100 dark:border-slate-700">
+                            <div className="text-sm text-gray-500 uppercase font-bold">Species</div>
+                            <div className="text-3xl font-black text-indigo-500">{uniqueSpecies}</div>
+                        </div>
+                        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-gray-100 dark:border-slate-700">
+                             <div className="text-sm text-gray-500 uppercase font-bold">Duration</div>
+                             <div className="text-xl font-bold dark:text-white mt-1">{session.startTime} - {session.endTime || 'Now'}</div>
+                        </div>
+                        <div className="bg-white dark:bg-slate-800 p-4 rounded-xl shadow-sm border border-gray-100 dark:border-slate-700">
+                             <div className="text-sm text-gray-500 uppercase font-bold">Observers</div>
+                             <div className="text-sm font-bold dark:text-white mt-1 truncate" title={session.observers}>{session.observers}</div>
+                        </div>
+                    </div>
+
+                    {/* Export Actions */}
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                        <button onClick={handleExportCSV} className="flex flex-col items-center gap-2 p-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                            <Table className="text-green-600"/> <span className="text-xs font-bold dark:text-gray-300">CSV</span>
+                        </button>
+                         <button onClick={handleExportJSON} className="flex flex-col items-center gap-2 p-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                            <FileJson className="text-orange-600"/> <span className="text-xs font-bold dark:text-gray-300">JSON</span>
+                        </button>
+                         <button onClick={handleExportPDF} className="flex flex-col items-center gap-2 p-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                            <FileText className="text-red-600"/> <span className="text-xs font-bold dark:text-gray-300">PDF</span>
+                        </button>
+                        <button onClick={handleExportText} className="flex flex-col items-center gap-2 p-3 bg-white dark:bg-slate-800 border border-gray-200 dark:border-slate-700 rounded-xl hover:bg-gray-50 dark:hover:bg-slate-700 transition-colors">
+                            <Clipboard className="text-blue-600"/> <span className="text-xs font-bold dark:text-gray-300">Copy Text</span>
+                        </button>
+                    </div>
+
+                    {/* Species List */}
+                    <div className="bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-gray-100 dark:border-slate-700 overflow-hidden">
+                        <div className="p-4 border-b border-gray-100 dark:border-slate-700 bg-gray-50 dark:bg-slate-900/50">
+                            <h3 className="font-bold dark:text-white">Species Breakdown</h3>
+                        </div>
+                        <div className="divide-y divide-gray-100 dark:divide-slate-700">
+                            {sortedSpecies.map(item => (
+                                <div key={item.id} className="p-3 flex justify-between items-center hover:bg-gray-50 dark:hover:bg-slate-700/50">
+                                    <span className="font-medium dark:text-gray-200">{item.name}</span>
+                                    <span className="font-bold font-mono text-slate-700 dark:text-white">{item.count}</span>
+                                </div>
+                            ))}
+                            {sortedSpecies.length === 0 && <div className="p-8 text-center text-gray-400">No birds recorded.</div>}
+                        </div>
+                    </div>
+
+                     {/* Action Footer */}
+                     <div className="flex gap-4 pt-4">
+                        <button onClick={() => onUpdateSession({ ...session, status: 'active' })} className="flex-1 py-3 border border-gray-300 dark:border-slate-600 rounded-xl font-bold text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-slate-700">
+                            Resume Counting
+                        </button>
+                        <button onClick={onClose} className="flex-1 py-3 bg-primary text-white rounded-xl font-bold shadow-lg hover:bg-sky-600">
+                            Back to Dashboard
+                        </button>
+                     </div>
+
+                </div>
+            </div>
+        </div>
     );
+  };
+
+  if (isCompleted) {
+      return renderReportUI();
   }
 
   return (
-    <div className="fixed inset-0 z-[60] bg-white dark:bg-slate-950 flex flex-col">
-       {/* Header */}
-       <div className="h-16 shrink-0 bg-white dark:bg-slate-900 border-b border-gray-200 dark:border-slate-800 flex justify-between items-center px-4 shadow-sm z-50">
-           <div className="flex items-center gap-3">
-               <button onClick={onClose} className="p-2 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full transition-colors">
-                   <ArrowLeft size={20} className="dark:text-white"/>
-               </button>
-               <div>
-                   <div className="flex items-center gap-2">
-                       <h2 className="font-bold text-lg dark:text-white leading-tight truncate max-w-[150px] md:max-w-xs">{session.name}</h2>
-                       <button onClick={() => setShowInfoModal(true)} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full text-gray-400 hover:text-primary transition-colors">
-                           <Edit2 size={14}/>
-                       </button>
-                       {isCompleted && (
-                           <span className="bg-green-100 text-green-700 text-[10px] px-2 py-0.5 rounded-full font-bold border border-green-200 shadow-sm flex items-center gap-1">
-                               <CheckCircle size={10} strokeWidth={3}/> FINISHED
-                           </span>
-                       )}
-                   </div>
-                   <div className="flex items-center gap-2 text-xs text-gray-500">
-                       <span className="flex items-center gap-1"><Clock size={10}/> {session.startTime}</span>
-                       <span>•</span>
-                       <span className="truncate max-w-[100px]">{session.observers}</span>
-                   </div>
-               </div>
-           </div>
-           
-           <div className="flex items-center gap-2">
-               <button onClick={handleToggleFinish} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-colors ${isCompleted ? 'bg-green-50 text-green-600 border-green-200' : 'bg-gray-100 text-gray-600 border-gray-200 hover:bg-gray-200'}`}>
-                   {isCompleted ? 'Re-Open' : 'Finish'}
-               </button>
-               
-               <button onClick={() => setShowRecordsModal(true)} className="p-2 bg-gray-50 dark:bg-slate-800 hover:bg-gray-100 dark:hover:bg-slate-700 rounded-full border border-gray-200 dark:border-slate-700 relative transition-colors">
-                   <List size={20} className="dark:text-white"/>
-                   <span className="absolute -top-1 -right-1 bg-primary text-white text-[9px] font-bold w-4 h-4 rounded-full flex items-center justify-center shadow-sm">
-                       {session.sightings.length}
-                   </span>
-               </button>
-           </div>
-       </div>
-
+      <>
        {renderCountingUI()}
-
-       {/* Edit Details Modal */}
-       {showInfoModal && (
-           <div className="fixed inset-0 z-[80] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowInfoModal(false)}>
-               <div className="bg-white dark:bg-slate-900 rounded-2xl shadow-2xl max-w-sm w-full p-6 animate-in zoom-in-95" onClick={e => e.stopPropagation()}>
-                   <div className="flex justify-between items-center mb-4">
-                       <h3 className="text-xl font-bold dark:text-white">Edit Session Details</h3>
-                       <button onClick={() => setShowInfoModal(false)} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full"><X size={20}/></button>
-                   </div>
-                   <div className="space-y-4">
-                       <div>
-                           <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Session Name</label>
-                           <input 
-                                value={infoForm.name} 
-                                onChange={e => setInfoForm({...infoForm, name: e.target.value})} 
-                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                           />
-                       </div>
-                       <div>
-                           <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Observers</label>
-                           <input 
-                                value={infoForm.observers} 
-                                onChange={e => setInfoForm({...infoForm, observers: e.target.value})} 
-                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white"
-                           />
-                       </div>
-                       <div>
-                           <label className="block text-xs font-bold text-gray-400 uppercase mb-1">Comments / Checklist Notes</label>
-                           <textarea 
-                                value={infoForm.notes} 
-                                onChange={e => setInfoForm({...infoForm, notes: e.target.value})} 
-                                className="w-full p-2 border rounded-lg dark:bg-slate-800 dark:border-slate-700 dark:text-white h-32"
-                                placeholder="Weather notes, general comments..."
-                           />
-                       </div>
-                       <button onClick={handleSaveInfo} className="w-full py-3 bg-primary text-white font-bold rounded-xl shadow-lg hover:bg-sky-600">
-                           Save Details
-                       </button>
-                   </div>
+       
+       {editingSighting && (
+           <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center sm:p-4" onClick={() => setEditingSighting(null)}>
+               <div className="bg-white dark:bg-slate-900 w-full sm:max-w-md sm:rounded-2xl overflow-hidden shadow-2xl h-[85vh] sm:h-auto" onClick={e => e.stopPropagation()}>
+                   {renderEditForm()}
                </div>
            </div>
        )}
 
-       {/* Records / History Modal */}
        {showRecordsModal && (
-          <div className="fixed inset-0 z-[70] bg-black/60 backdrop-blur-sm flex justify-end" onClick={() => setShowRecordsModal(false)}>
-              <div className="w-full max-w-md bg-white dark:bg-slate-900 h-full shadow-2xl flex flex-col animate-in slide-in-from-right duration-300" onClick={e => e.stopPropagation()}>
-                  <div className="p-4 border-b border-gray-200 dark:border-slate-800 flex justify-between items-center bg-gray-50 dark:bg-slate-900">
-                      <h3 className="font-bold text-lg dark:text-white flex items-center gap-2">
-                          <History size={20} className="text-gray-400"/> History
-                      </h3>
-                      <button onClick={() => setShowRecordsModal(false)} className="p-1 hover:bg-gray-200 dark:hover:bg-slate-800 rounded-full"><X size={20} className="dark:text-white"/></button>
-                  </div>
-                  
-                  <div className="flex-1 overflow-y-auto">
-                      {session.sightings.length === 0 ? (
-                          <div className="p-10 text-center text-gray-400">No sightings recorded yet.</div>
-                      ) : (
-                          [...session.sightings].reverse().map(s => {
-                             const sp = speciesList.find(x => x.id === s.speciesId);
-                             return (
-                                 <div key={s.id} onClick={() => { setShowRecordsModal(false); handleStartEdit(s); }} className="p-4 border-b border-gray-100 dark:border-slate-800 hover:bg-gray-50 dark:hover:bg-slate-800/50 cursor-pointer flex justify-between items-center group transition-colors">
-                                     <div className="flex-1">
-                                         <div className="flex justify-between items-start mb-1">
-                                             <span className="font-bold text-gray-900 dark:text-white">{sp?.name || 'Unknown'}</span>
-                                             <span className="text-xs text-gray-400 font-mono">{new Date(s.timestamp).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})}</span>
-                                         </div>
-                                         <div className="flex flex-wrap gap-2 items-center text-xs">
-                                             <span className="bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded flex items-center gap-1">
-                                                 Count: {s.count}
-                                             </span>
-                                             {s.direction && <span className="bg-gray-100 dark:bg-slate-700 dark:text-gray-300 px-1.5 py-0.5 rounded border border-gray-200 dark:border-slate-600">{s.direction}</span>}
-                                             {s.age && s.age !== 'Unknown' && <span className="bg-indigo-50 dark:bg-indigo-900/30 text-indigo-600 dark:text-indigo-300 px-1.5 py-0.5 rounded">{s.age}</span>}
-                                         </div>
-                                         {s.comment && <p className="text-xs text-gray-500 italic mt-1 truncate max-w-[200px]">{s.comment}</p>}
-                                     </div>
-                                     <button onClick={(e) => handleRecordDelete(e, s.id)} className="ml-3 p-2 text-gray-300 hover:text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition-all opacity-0 group-hover:opacity-100">
-                                         <Trash2 size={16}/>
-                                     </button>
-                                 </div>
-                             );
-                          })
-                      )}
-                  </div>
-
-                  {/* Modal Footer with Actions */}
-                  <div className="p-4 bg-gray-50 dark:bg-slate-900 border-t border-gray-200 dark:border-slate-800 space-y-3">
-                      <div className="grid grid-cols-2 gap-3">
-                          <button onClick={handleExportCSV} className="flex items-center justify-center gap-2 py-2.5 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-xl text-sm font-bold shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 dark:text-white transition-colors"><Table size={16}/> Export CSV</button>
-                          <button onClick={handleExportJSON} className="flex items-center justify-center gap-2 py-2.5 bg-white dark:bg-slate-800 border dark:border-slate-700 rounded-xl text-sm font-bold shadow-sm hover:bg-gray-50 dark:hover:bg-slate-700 dark:text-white transition-colors"><FileJson size={16}/> Export JSON</button>
-                      </div>
-                      <button onClick={handleExportText} className="w-full flex items-center justify-center gap-2 py-2.5 bg-primary text-white rounded-xl text-sm font-bold shadow hover:bg-sky-600 transition-colors"><Clipboard size={16}/> Copy Summary</button>
-                  </div>
-              </div>
-          </div>
+           <div className="fixed inset-0 z-[60] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4" onClick={() => setShowRecordsModal(false)}>
+               <div className="bg-white dark:bg-slate-900 w-full max-w-2xl rounded-2xl shadow-2xl h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+                   <div className="p-4 border-b dark:border-slate-800 flex justify-between items-center">
+                       <h3 className="font-bold text-lg dark:text-white">Session History</h3>
+                       <button onClick={() => setShowRecordsModal(false)} className="p-1 hover:bg-gray-100 dark:hover:bg-slate-800 rounded-full"><X/></button>
+                   </div>
+                   <div className="flex-1 overflow-y-auto p-4">
+                       <table className="w-full text-sm text-left">
+                           <thead className="text-xs text-gray-500 bg-gray-50 dark:bg-slate-800 uppercase">
+                               <tr>
+                                   <th className="px-3 py-2">Time</th>
+                                   <th className="px-3 py-2">Species</th>
+                                   <th className="px-3 py-2 text-right">Count</th>
+                                   <th className="px-3 py-2"></th>
+                                </tr>
+                           </thead>
+                           <tbody className="divide-y divide-gray-100 dark:divide-slate-800">
+                               {session.sightings.slice().reverse().map(s => {
+                                   const sp = speciesList.find(x => x.id === s.speciesId);
+                                   return (
+                                       <tr key={s.id}>
+                                           <td className="px-3 py-2 text-gray-500">{new Date(s.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}</td>
+                                           <td className="px-3 py-2 font-medium dark:text-white">
+                                               {sp?.name}
+                                               {s.direction && <span className="ml-2 text-[10px] bg-gray-100 dark:bg-slate-700 px-1 rounded border dark:border-slate-600">{s.direction}</span>}
+                                           </td>
+                                           <td className="px-3 py-2 text-right font-bold dark:text-white">{s.count}</td>
+                                           <td className="px-3 py-2 text-right flex justify-end gap-1">
+                                               <button onClick={() => { setShowRecordsModal(false); handleStartEdit(s); }} className="p-1 hover:text-primary rounded hover:bg-primary/10 transition-colors"><Edit2 size={14}/></button>
+                                               <button onClick={(e) => handleRecordDelete(e, s.id)} className="p-1 hover:text-red-500 rounded hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"><Trash2 size={14}/></button>
+                                           </td>
+                                       </tr>
+                                   );
+                               })}
+                               {session.sightings.length === 0 && (
+                                   <tr><td colSpan={4} className="p-4 text-center text-gray-400">No records yet.</td></tr>
+                               )}
+                           </tbody>
+                       </table>
+                   </div>
+               </div>
+           </div>
        )}
-    </div>
+      </>
   );
 };
